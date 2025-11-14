@@ -1,0 +1,17 @@
+# macOS junk
+.DS_Store
+
+# ZIP files
+*.zip
+
+# DaVinci folders
+DaVinci1.0.28/
+davinci_v4/
+python_davinci_v3/
+
+# Archive folder or file
+Archive.zip
+
+# Python cache
+__pycache__/
+*.pyc
