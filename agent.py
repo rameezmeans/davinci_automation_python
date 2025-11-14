@@ -1,4 +1,4 @@
-# agent.py — open DaVinci, select BRAND→ECU, feed BIN (no save)
+# agent.py — receive upload → run full DaVinci automation → apply services → save mod file → upload result
 
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -76,7 +76,7 @@ async def process_upload(
         "--input", str(bin_path),
         "--brand", brand_clean,
         "--ecu", ecu_clean,
-        "--services", services_norm,        # <- pass services
+        "--services", services_norm,        
     ]
 
     # echo inputs to server console for debugging

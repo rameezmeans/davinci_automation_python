@@ -1,4 +1,4 @@
-# davinci_automation.py — Launch/attach DaVinci → select BRAND → double-click ECU → wait for Open dialog → STOP
+# davinci_automation.py — Launch/attach DaVinci → select BRAND & ECU → load BIN → apply services → save mod file
 # deps: pip install pywinauto
 
 import argparse, sys, time, subprocess
@@ -11,7 +11,6 @@ from pywinauto.controls.uiawrapper import UIAWrapper
 from pywinauto.uia_defines import IUIA
 from pywinauto import clipboard
 import logging
-import threading
 logging.basicConfig(filename=str(Path("C:/davinci_automation/davinci_automation.log")),
                     level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -1479,16 +1478,20 @@ def run(exe: Path, brand: str, ecu: str, input_path: str | None = None, services
 def parse_args():
     p = argparse.ArgumentParser(
         description=(
-            "DaVinci: select BRAND → double-click ECU → wait Open dialog → stop.\n"
-            "Note: --input and --services are working now."
+            "DaVinci automation:\n"
+            "  1) Launch/attach DaVinci.\n"
+            "  2) Select BRAND and ECU.\n"
+            "  3) Auto-load the --input BIN from C:\\\\ecu_files\\\\original.\n"
+            "  4) Apply --services (e.g. 'DPF OFF, EGR OFF').\n"
+            "  5) Save the modified file into C:\\\\ecu_files\\\\modified."
         )
     )
     p.add_argument("--exe", required=True, help="Path to davinci.exe")
     p.add_argument("--brand", required=True, help="Brand as shown in DaVinci (e.g., BMW)")
     p.add_argument("--ecu", required=True, help="ECU as shown under the brand (e.g., Bosch MEVD17.2)")
     # Back-compat only — these values are parsed but unused in this script
-    p.add_argument("--input", help="(ignored) Full path to the BIN to open in the dialog")
-    p.add_argument("--services", default="", help="(ignored) Services string e.g. 'Stage 0, DPF OFF'")
+    p.add_argument("--input", help="Full path to the BIN file (copied into C:\\ecu_files\\original)")
+    p.add_argument("--services", default="", help="Services string e.g. 'DPF OFF, EGR OFF'")
     return p.parse_args()
 
 if __name__ == "__main__":
