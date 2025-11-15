@@ -218,6 +218,7 @@ def poll_forever(interval_seconds: int = 120):
 
 
 if __name__ == "__main__":
+    print(">>> AGENT: FILE LOADED")
     try:
         poll_forever()
     except KeyboardInterrupt:
