@@ -99,6 +99,7 @@ def _run_automation(bin_path: Path, brand: str, ecu: str, services):
         "--services", services_norm,
     ]
 
+    print(f"[AGENT] Running automation for {bin_path} | brand={brand_clean} ecu={ecu_clean} services={services_norm}", flush=True)
     logging.info(
         f"Running automation for {bin_path} | "
         f"brand={brand_clean} ecu={ecu_clean} services={services_norm}"
@@ -111,6 +112,7 @@ def _run_automation(bin_path: Path, brand: str, ecu: str, services):
     err = r.stderr or ""
     logging.info(f"automation stdout (tail): {out[-500:]}")
     logging.info(f"automation stderr (tail): {err[-500:]}")
+    print(f"[AGENT] automation returncode={r.returncode}", flush=True)
 
     saved_path = None
     for pat in (r"SAVED_PATH:(?P<p>.+)", r"SAVED:(?P<p>.+)", r"SAVING_TO:(?P<p>.+)"):
@@ -118,6 +120,11 @@ def _run_automation(bin_path: Path, brand: str, ecu: str, services):
         if m:
             saved_path = m.group("p").strip().strip('"')
             break
+
+    if saved_path:
+        print(f"[AGENT] Detected saved_path: {saved_path}", flush=True)
+    else:
+        print("[AGENT] No saved_path detected in automation output", flush=True)
 
     if not ok:
         logging.error(f"Automation failed (code={r.returncode}) for {bin_path}")
@@ -141,8 +148,10 @@ def _post_save_reply(task_id, saved_path: str):
             "saved_path": saved_path,
             "file_b64": b64,
         }
+        print(f"[AGENT] Uploading result for task_id={task_id} from {saved_path}", flush=True)
         logging.info(f"Posting save_reply for task_id={task_id}")
         resp = requests.post(API_SAVE_REPLY_URL, json=payload, timeout=30)
+        print(f"[AGENT] save_reply response: {resp.status_code}", flush=True)
         logging.info(f"save_reply response: {resp.status_code} {resp.text[:500]}")
     except Exception as e:
         logging.error(f"save_reply error for task_id={task_id}: {e}")
@@ -158,6 +167,7 @@ def process_task(task: dict):
         ecu = task.get("ecu") or ""
         services = task.get("services") or ""
 
+        print(f"[AGENT] Processing task_id={task_id} | file_name={file_name} | brand={brand} | ecu={ecu}", flush=True)
         logging.info(
             f"Processing task_id={task_id}, file={file_url}, file_name={file_name}"
         )
@@ -170,13 +180,17 @@ def process_task(task: dict):
         if not _download_file(file_url, bin_path):
             logging.error(f"Task {task_id}: download failed, skipping automation")
             return
+        print(f"[AGENT] Downloaded file to {bin_path}", flush=True)
 
         ok, saved_path, out, err = _run_automation(bin_path, brand, ecu, services)
+        print(f"[AGENT] Automation finished for task_id={task_id} | ok={ok} | saved_path={saved_path}", flush=True)
 
         if ok and saved_path:
             _post_save_reply(task_id, saved_path)
+            print(f"[AGENT] Completed task_id={task_id}", flush=True)
         else:
             logging.error(f"Task {task_id}: automation failed or no saved_path")
+            print(f"[AGENT] Task {task_id} FAILED (ok={ok}, saved_path={saved_path})", flush=True)
     except Exception as e:
         logging.error(f"Unhandled error while processing task {task}: {e}")
 
@@ -192,6 +206,7 @@ def poll_forever(interval_seconds: int = 120):
     )
 
     while True:
+        print("[AGENT] --- Poll cycle start ---", flush=True)
         try:
             logging.info(f"Polling {API_FILES_URL}")
             resp = requests.get(API_FILES_URL, timeout=30)
@@ -205,20 +220,26 @@ def poll_forever(interval_seconds: int = 120):
                 )
                 tasks = []
 
+            print(f"[AGENT] Polling done, got {len(tasks)} task(s)", flush=True)
+
             if not tasks:
                 logging.info("No tasks returned.")
+                print("[AGENT] No tasks returned this cycle.", flush=True)
             else:
                 logging.info(f"Received {len(tasks)} task(s)")
+                print(f"[AGENT] Processing {len(tasks)} task(s) from queue", flush=True)
                 for task in tasks:
                     process_task(task)
         except Exception as e:
             logging.error(f"Top-level polling error: {e}")
+            print(f"[AGENT] Top-level polling error: {e}", flush=True)
 
         time.sleep(interval_seconds)
+        print(f"[AGENT] Sleeping {interval_seconds} seconds before next poll...", flush=True)
 
 
 if __name__ == "__main__":
-    print(">>> AGENT: FILE LOADED")
+    print(">>> AGENT: STARTED. Polling for tasks...", flush=True)
     try:
         poll_forever()
     except KeyboardInterrupt:
