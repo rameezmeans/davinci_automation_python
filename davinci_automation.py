@@ -152,7 +152,10 @@ def select_brand_ecu_ui(tree, brand: str, ecu: str):
         except Exception:
             pass
     if not brand_node:
-        raise RuntimeError(f"Brand not found: {eff_brand}")
+        msg = f"Brand not found in DaVinci tree: {eff_brand}"
+        logging.error(f"AUTOMATION_ERROR: {msg}")
+        print(f"AUTOMATION_ERROR: {msg}")
+        raise RuntimeError(msg)
 
     try:
         brand_node.select(); brand_node.expand()
@@ -170,7 +173,10 @@ def select_brand_ecu_ui(tree, brand: str, ecu: str):
         except Exception:
             pass
     if not ecu_node:
-        raise RuntimeError(f"ECU not found under {eff_brand}: {ecu}")
+        msg = f"ECU not found under {eff_brand}: {ecu}"
+        logging.error(f"AUTOMATION_ERROR: {msg}")
+        print(f"AUTOMATION_ERROR: {msg}")
+        raise RuntimeError(msg)
 
     # Double-click ECU to trigger the Open dialog
     try:
@@ -1434,6 +1440,13 @@ def run(exe: Path, brand: str, ecu: str, input_path: str | None = None, services
     """Launch/attach DaVinci, select brand+ECU, and stop once the Open dialog appears.
     input_path and services are accepted for compatibility but not used here.
     """
+    # Guard for missing brand or ecu
+    if not (brand or "").strip() or not (ecu or "").strip():
+        message = f"Missing brand or ECU from agent (brand='{brand}', ecu='{ecu}')"
+        logging.error(message)
+        print(f"AUTOMATION_ERROR: {message}")
+        raise RuntimeError(message)
+
     launch_if_needed(exe)
     logging.info("launched/attached")
     app, win = connect_window()

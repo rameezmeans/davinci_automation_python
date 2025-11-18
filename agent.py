@@ -24,14 +24,60 @@ for p in (INDIR, WORKDIR):
     except Exception:
         pass
 
-API_FILES_URL = "https://stagingbackend.guru-host.co.uk/api/davinci/files"
-API_SAVE_REPLY_URL = "https://stagingbackend.guru-host.co.uk/api/davinci/save_reply"
+API_STAGING_FILES_URL = "https://backend-staging.ecutech.gr/api/davinci/files"
+API_PRODUCTION_FILES_URL = "https://backend.ecutech.gr/api/davinci/files"
+
+API_STAGING_SAVE_REPLY_URL = "https://backend-staging.ecutech.gr/api/davinci/save_reply"
+API_PRODUCTION_SAVE_REPLY_URL = "https://backend.ecutech.gr/api/davinci/save_reply"
+
+API_STAGING_FAILURE_REPLY_URL = "https://backend-staging.ecutech.gr/api/davinci/failure"
+API_PRODUCTION_FAILURE_REPLY_URL = "https://backend.ecutech.gr/api/davinci/failure"
 
 logging.basicConfig(
     filename=str(Path("C:/davinci_automation/agent.log")),
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
 )
+
+def _select_failure_url(on_dev):
+    """
+    Pick the correct failure URL based on `on_dev` flag from the task.
+    on_dev = 1 (or truthy '1') → staging; otherwise → production.
+    """
+    flag = str(on_dev).strip()
+    if flag == "1":
+        return API_STAGING_FAILURE_REPLY_URL
+    return API_PRODUCTION_FAILURE_REPLY_URL
+
+def _post_failure(task_id, message: str, on_dev):
+    """POST a failure reason back to the backend for the given task_id."""
+    if not task_id or not (message or "").strip():
+        logging.info("failure skipped (missing task_id or message)")
+        return
+
+    payload = {
+        "task_id": str(task_id),
+        "message": message,
+    }
+    try:
+        url = _select_failure_url(on_dev)
+        logging.info(f"Posting failure to {url} for task_id={task_id} | message={message}")
+        print(f"[AGENT] Posting failure for task_id={task_id}: {message}", flush=True)
+        resp = requests.post(url, json=payload, timeout=30)
+        print(f"[AGENT] failure response: {resp.status_code}", flush=True)
+        logging.info(f"failure response: {resp.status_code} {resp.text[:500]}")
+    except Exception as e:
+        logging.error(f"failure post error for task_id={task_id}: {e}")
+
+def _select_save_reply_url(on_dev):
+    """
+    Pick the correct save_reply URL based on `on_dev` flag from the task.
+    on_dev = 1 (or truthy '1') → staging; otherwise → production.
+    """
+    flag = str(on_dev).strip()
+    if flag == "1":
+        return API_STAGING_SAVE_REPLY_URL
+    return API_PRODUCTION_SAVE_REPLY_URL
 
 
 def _normalize_services(s):
@@ -80,6 +126,14 @@ def _download_file(url: str, dest: Path) -> bool:
         logging.error(f"Download failed for {url}: {e}")
         return False
 
+def _extract_automation_error(out: str, err: str) -> str:
+    """Pull a structured AUTMATION_ERROR line out of automation output."""
+    combined = (out or "") + "\n" + (err or "")
+    m = re.search(r"AUTOMATION_ERROR:\s*(.+)", combined)
+    if m:
+        return m.group(1).strip()
+    # fallback: first 500 chars of combined output
+    return combined.strip()[:500] if combined.strip() else "DaVinci automation failed (no further details)."
 
 def _run_automation(bin_path: Path, brand: str, ecu: str, services):
     """Call davinci_automation.py with the given parameters.
@@ -131,10 +185,14 @@ def _run_automation(bin_path: Path, brand: str, ecu: str, services):
     if not saved_path:
         logging.warning(f"Automation did not report saved path for {bin_path}")
 
-    return ok, saved_path, out, err
+    error_message = None
+    if (not ok) or (not saved_path):
+        error_message = _extract_automation_error(out, err)
+
+    return ok, saved_path, out, err, error_message
 
 
-def _post_save_reply(task_id, saved_path: str):
+def _post_save_reply(task_id, saved_path: str, on_dev):
     """POST the modified file back to the backend as base64 for the given task_id."""
     if not (task_id and saved_path):
         logging.info("save_reply skipped (missing task_id or saved_path)")
@@ -149,8 +207,9 @@ def _post_save_reply(task_id, saved_path: str):
             "file_b64": b64,
         }
         print(f"[AGENT] Uploading result for task_id={task_id} from {saved_path}", flush=True)
-        logging.info(f"Posting save_reply for task_id={task_id}")
-        resp = requests.post(API_SAVE_REPLY_URL, json=payload, timeout=30)
+        url = _select_save_reply_url(on_dev)
+        logging.info(f"Posting save_reply to {url} for task_id={task_id}")
+        resp = requests.post(url, json=payload, timeout=30)
         print(f"[AGENT] save_reply response: {resp.status_code}", flush=True)
         logging.info(f"save_reply response: {resp.status_code} {resp.text[:500]}")
     except Exception as e:
@@ -166,6 +225,17 @@ def process_task(task: dict):
         brand = task.get("brand") or ""
         ecu = task.get("ecu") or ""
         services = task.get("services") or ""
+        on_dev = task.get("on_dev") or ""
+
+        on_dev = "1" if str(on_dev).strip() == "1" else "0"
+
+        # Early validation for missing brand/ECU
+        if not brand.strip() or not ecu.strip():
+            msg = f"Missing brand or ECU for task {task_id} (brand='{brand}', ecu='{ecu}')"
+            logging.error(msg)
+            print(f"[AGENT] {msg}", flush=True)
+            _post_failure(task_id, msg, on_dev)
+            return
 
         print(f"[AGENT] Processing task_id={task_id} | file_name={file_name} | brand={brand} | ecu={ecu}", flush=True)
         logging.info(
@@ -182,17 +252,66 @@ def process_task(task: dict):
             return
         print(f"[AGENT] Downloaded file to {bin_path}", flush=True)
 
-        ok, saved_path, out, err = _run_automation(bin_path, brand, ecu, services)
+        ok, saved_path, out, err, error_message = _run_automation(bin_path, brand, ecu, services)
         print(f"[AGENT] Automation finished for task_id={task_id} | ok={ok} | saved_path={saved_path}", flush=True)
 
         if ok and saved_path:
-            _post_save_reply(task_id, saved_path)
+            _post_save_reply(task_id, saved_path, on_dev)
             print(f"[AGENT] Completed task_id={task_id}", flush=True)
         else:
             logging.error(f"Task {task_id}: automation failed or no saved_path")
             print(f"[AGENT] Task {task_id} FAILED (ok={ok}, saved_path={saved_path})", flush=True)
+
+            failure_reason = error_message or f"DaVinci automation failed or did not produce a saved file (ok={ok}, saved_path={saved_path})."
+            _post_failure(task_id, failure_reason, on_dev)
+            
     except Exception as e:
         logging.error(f"Unhandled error while processing task {task}: {e}")
+
+
+def _fetch_all_tasks():
+    """
+    Poll both staging and production /api/davinci/files endpoints.
+    Returns a single flat list of task dicts.
+    If a task does not contain `on_dev`, it will be set based on the source
+    (staging → '1', production → '0').
+    """
+    all_tasks = []
+
+    sources = [
+        ("staging", API_STAGING_FILES_URL, "1"),
+        ("production", API_PRODUCTION_FILES_URL, "0"),
+    ]
+
+    for label, url, default_on_dev in sources:
+        try:
+            logging.info(f"Polling {label} files URL: {url}")
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+
+            try:
+                data = resp.json()
+            except Exception as e:
+                logging.error(
+                    f"Failed to decode JSON from {label} files API: {e} | body={resp.text[:500]}"
+                )
+                data = []
+
+            if not data:
+                logging.info(f"{label}: no tasks returned.")
+                continue
+
+            logging.info(f"{label}: received {len(data)} task(s)")
+            for task in data:
+                # If backend didn't set on_dev explicitly, infer from source.
+                if "on_dev" not in task or (task["on_dev"] in (None, "", 0, 1) and str(task["on_dev"]).strip() == ""):
+                    task["on_dev"] = default_on_dev
+                all_tasks.append(task)
+
+        except Exception as e:
+            logging.error(f"{label} files polling error: {e}")
+
+    return all_tasks
 
 
 def poll_forever(interval_seconds: int = 120):
@@ -208,19 +327,8 @@ def poll_forever(interval_seconds: int = 120):
     while True:
         print("[AGENT] --- Poll cycle start ---", flush=True)
         try:
-            logging.info(f"Polling {API_FILES_URL}")
-            resp = requests.get(API_FILES_URL, timeout=30)
-            resp.raise_for_status()
-
-            try:
-                tasks = resp.json()
-            except Exception as e:
-                logging.error(
-                    f"Failed to decode JSON from files API: {e} | body={resp.text[:500]}"
-                )
-                tasks = []
-
-            print(f"[AGENT] Polling done, got {len(tasks)} task(s)", flush=True)
+            tasks = _fetch_all_tasks()
+            print(f"[AGENT] Polling done, got {len(tasks)} task(s) (staging+production)", flush=True)
 
             if not tasks:
                 logging.info("No tasks returned.")
