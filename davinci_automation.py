@@ -1300,33 +1300,61 @@ SERVICE_LABELS = {
     "DPF": "DPF",
     "EGR": "EGR",
     "TVA": "TVA",
-    "LAMBDA": "LAMBDA",
     "MAF": "MAF",
     "FLAPS": "FLAPS",
-    "STARTSTOP": "STARTSTOP",
     "ADBLUE": "ADBLUE",
-    "READINESS": "READINESS",
+    "LAMBDA": "LAMBDA",
+    "STARTSTOP": "STARTSTOP",
 }
 
 def parse_services_map(services: str) -> dict[str, str]:
     """
-    'DPF OFF, EGR OFF' → {'DPF': 'OFF', 'EGR': 'OFF'}
-    case-insensitive, ignores unknown tokens.
+    Parse backend service strings into a dict { SERVICE_KEY: "ON"/"OFF" }.
+
+    Mapping rules provided by backend:
+      - "DPF OFF" → DPF:OFF
+      - "EGR OFF" → EGR:OFF
+      - "TVA" → TVA:OFF
+      - "MAF Removal" → MAF:OFF
+      - "Swirl Flap OFF" → FLAPS:OFF
+      - "SCR (ADblue OFF)" → ADBLUE:OFF
+      - "Decat / O2 / Lamda OFF" → LAMBDA:OFF
+      - "Decat" → LAMBDA:ON
+      - "Start and Stop OFF" → STARTSTOP:OFF
+
+    READINESS is ignored.
+    Matching is case‑insensitive.
+    "ON" means: ensure toggle ends ON (double-click if currently OFF).
+    "OFF" means: ensure toggle ends OFF (double-click if currently ON).
     """
     result = {}
     if not services:
         return result
 
-    parts = [p.strip() for p in services.replace(";", ",").split(",") if p.strip()]
+    parts = [p.strip().lower() for p in services.replace(";", ",").split(",") if p.strip()]
+
     for p in parts:
-        up = p.upper()
-        for key in SERVICE_LABELS.keys():
-            if key in up:
-                if "OFF" in up:
-                    result[key] = "OFF"
-                elif "ON" in up:
-                    result[key] = "ON"
-                break
+        txt = p.lower()
+
+        if "dpf" in txt and "off" in txt:
+            result["DPF"] = "OFF"
+        elif "egr" in txt and "off" in txt:
+            result["EGR"] = "OFF"
+        elif txt == "tva" or txt.startswith("tva"):
+            result["TVA"] = "OFF"
+        elif "maf" in txt and "removal" in txt:
+            result["MAF"] = "OFF"
+        elif "swirl" in txt or "flap" in txt:
+            result["FLAPS"] = "OFF"
+        elif "scr" in txt or "adblue" in txt:
+            result["ADBLUE"] = "OFF"
+        elif ("decat" in txt or "lambda" in txt or "lamda" in txt or "o2" in txt) and "off" in txt:
+            result["LAMBDA"] = "OFF"
+        elif txt == "decat":
+            result["LAMBDA"] = "ON"
+        elif "start" in txt and "stop" in txt and "off" in txt:
+            result["STARTSTOP"] = "OFF"
+
     return result
 
 
@@ -1375,8 +1403,8 @@ def click_toggle_by_label(win, label_text: str):
 def apply_services(win, services: str):
     """
     Apply requested services (e.g. 'DPF OFF, EGR OFF') by clicking toggles.
-    Now uses DOUBLE-CLICK per label and hits ENTER after each toggle
-    to dismiss any blocking popup.
+    Uses DOUBLE-CLICK per label and hits ENTER after each toggle to dismiss any blocking popup.
+    Respects ON/OFF state as parsed from the backend.
     """
     svc_map = parse_services_map(services)
     if not svc_map:
@@ -1392,21 +1420,25 @@ def apply_services(win, services: str):
     time.sleep(0.3)
 
     for key, state in svc_map.items():
-        # Right now we assume default = ON, so:
-        #   - OFF → double-click once to disable
-        #   - ON  → do nothing (already ON)
         if state == "OFF":
             clicked = click_toggle_by_label(win, SERVICE_LABELS[key])
             time.sleep(0.15)
             if clicked:
-                # handle any popup by pressing ENTER
                 try:
                     send_keys("{ENTER}")
                 except Exception:
                     pass
-                # short pause so DaVinci can process it
                 time.sleep(0.2)
-        # if you ever need to force ON, you can also add logic here
+
+        elif state == "ON":
+            clicked = click_toggle_by_label(win, SERVICE_LABELS[key])
+            time.sleep(0.15)
+            if clicked:
+                try:
+                    send_keys("{ENTER}")
+                except Exception:
+                    pass
+                time.sleep(0.2)
 
 def after_file_loaded_double_click_and_confirm(win, wait_before=5.0):
     """
