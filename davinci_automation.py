@@ -21,18 +21,63 @@ OPEN_HINTS  = ["Open", "Öffnen", "Abrir", "Открытие", "Open File", "Sel
 SAVE_HINTS  = ["Save Mod File", "Save As", "Save", "Speichern", "Guardar", "Сохранение", "Save file", "Save Modified File"]
 # Helper to detect top-level file dialogs even if not a dialog or with custom titles
 
-# Treat multiple brand inputs as VAG (DaVinci groups them under one node)
-VAG_BRANDS = {"volkswagen", "vw", "audi", "seat", "skoda"}
+# Map various backend brand inputs to the label used in DaVinci's brand tree
+BRAND_ALIASES = {
+    # VAG cluster
+    "volkswagen": "VAG",
+    "vw": "VAG",
+    "audi": "VAG",
+    "seat": "VAG",
+    "skoda": "VAG",
+
+    # Direct one-to-one caps (for completeness, in case backend sends lowercase)
+    "bmw": "BMW",
+    "fiat": "FIAT",
+    "lancia": "LANCIA",
+    "smart": "SMART",
+    "dodge": "DODGE",
+    "chrysler": "CHRYSLER",
+    "iveco": "IVECO",
+    "peugeot": "PEUGEOT",
+    "opel": "OPEL",
+    "renault": "RENAULT",
+    "ford": "FORD",
+    "mazda": "MAZDA",
+    "land rover": "LAND ROVER",
+    "jaguar": "JAGUAR",
+    "kia": "KIA",
+    "hyundai": "HYUNDAI",
+    "volvo": "VOLVO",
+    "suzuki": "SUZUKI",
+
+    # Special cases where backend name and DaVinci label differ
+    "alfa romeo": "ALFA",
+    "alfa": "ALFA",
+    "mercedes-benz": "MERCEDES",
+    "mercedes benz": "MERCEDES",
+    "mercedes": "MERCEDES",
+}
 
 def effective_brand(brand: str) -> str:
-    """Map various inputs to the brand label used by DaVinci's tree.
-    For VAG cluster (Volkswagen/Audi/SEAT/Skoda/VW) return 'VAG'.
-    Otherwise return the original string unchanged.
     """
-    b = (brand or "").strip().lower()
-    if b in VAG_BRANDS:
-        return "VAG"
-    return brand
+    Map various backend brand inputs to the brand label used by DaVinci's tree.
+
+    Examples:
+      - 'Volkswagen', 'VW', 'Audi', 'Seat', 'Skoda' → 'VAG'
+      - 'Mercedes-Benz', 'Mercedes Benz', 'Mercedes' → 'MERCEDES'
+      - 'Alfa Romeo', 'Alfa' → 'ALFA'
+      - Other brands use an uppercase-normalized version of the original string.
+    """
+    raw = (brand or "").strip()
+    b = raw.lower()
+
+    # First try explicit mapping
+    mapped = BRAND_ALIASES.get(b)
+    if mapped:
+        return mapped
+
+    # Fallback: just uppercase whatever we got, so it matches DaVinci's caps style
+    return raw.upper()
 
 def launch_if_needed(exe: Path):
     if not exe.exists():
